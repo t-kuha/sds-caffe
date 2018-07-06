@@ -46,6 +46,8 @@ COMMON_FLAGS += -DCAFFE_VERSION=$(DYNAMIC_VERSION_MAJOR).$(DYNAMIC_VERSION_MINOR
 ##############################
 # CXX_SRCS are the source files excluding the test ones.
 CXX_SRCS := $(shell find src/$(PROJECT) ! -name "test_*.cpp" -name "*.cpp")
+#CXX_SRCS += $(shell find src/sds ! -name "test_*.cpp" -name "*.cpp")
+SDS_SRCS += $(shell find src/sds ! -name "test_*.cpp" -name "*.cpp")
 # CU_SRCS are the cuda source files
 CU_SRCS := $(shell find src/$(PROJECT) ! -name "test_*.cu" -name "*.cu")
 # TEST_SRCS are the test source files
@@ -111,9 +113,10 @@ PROTO_GEN_PY := $(foreach file,${PROTO_SRCS:.proto=_pb2.py}, \
 # These objects will be linked into the final shared library, so we
 # exclude the tool, example, and test objects.
 CXX_OBJS := $(addprefix $(BUILD_DIR)/, ${CXX_SRCS:.cpp=.o})
+SDS_OBJS := $(addprefix $(BUILD_DIR)/, ${SDS_SRCS:.cpp=.o})
 CU_OBJS := $(addprefix $(BUILD_DIR)/cuda/, ${CU_SRCS:.cu=.o})
 PROTO_OBJS := ${PROTO_GEN_CC:.cc=.o}
-OBJS := $(PROTO_OBJS) $(CXX_OBJS) $(CU_OBJS)
+OBJS := $(PROTO_OBJS) $(CXX_OBJS) $(SDS_OBJS) $(CU_OBJS) 
 # tool, example, and test objects
 TOOL_OBJS := $(addprefix $(BUILD_DIR)/, ${TOOL_SRCS:.cpp=.o})
 TOOL_BUILD_DIR := $(BUILD_DIR)/tools
@@ -125,7 +128,7 @@ TEST_OBJS := $(TEST_CXX_OBJS) $(TEST_CU_OBJS)
 GTEST_OBJ := $(addprefix $(BUILD_DIR)/, ${GTEST_SRC:.cpp=.o})
 EXAMPLE_OBJS := $(addprefix $(BUILD_DIR)/, ${EXAMPLE_SRCS:.cpp=.o})
 # Output files for automatic dependency generation
-DEPS := ${CXX_OBJS:.o=.d} ${CU_OBJS:.o=.d} ${TEST_CXX_OBJS:.o=.d} \
+DEPS := ${CXX_OBJS:.o=.d} ${SDS_OBJS:.o=.d} ${CU_OBJS:.o=.d} ${TEST_CXX_OBJS:.o=.d} \
 	${TEST_CU_OBJS:.o=.d} $(BUILD_DIR)/${MAT$(PROJECT)_SO:.$(MAT_SO_EXT)=.d}
 # tool, example, and test bins
 TOOL_BINS := ${TOOL_OBJS:.o=.bin}
@@ -200,7 +203,7 @@ ifeq ($(USE_OPENCV), 1)
 
 endif
 PYTHON_LIBRARIES ?= boost_python python2.7
-WARNINGS := -Wall -Wno-sign-compare
+WARNINGS := -Wall -Wno-sign-compare  -Wno-unused-label -Wno-unused-function
 
 ##############################
 # Set build directories
@@ -300,19 +303,31 @@ else
 endif
 
 # Custom compiler
+ifdef PLATFORM
+	_PLATFORM = $(PLATFORM)
+else
+	_PLATFORM = zc702
+endif
+
+ifneq ($(BUILD_HW), 0)
+	SDSCC = -sds-hw gemm_block_units_mmult src/sds/sds_gemm.cpp -clkid 1 -sds-end -sds-pf $(_PLATFORM) -sds-sys-config linux
+else 
+	SDSCC = -sds-pf $(_PLATFORM) -sds-sys-config linux
+endif
+
 ifdef CUSTOM_CXX
 	CXX := $(CUSTOM_CXX)
 endif
 
 # Static linking
-ifneq (,$(findstring clang++,$(CXX)))
-	STATIC_LINK_COMMAND := -Wl,-force_load $(STATIC_NAME)
-else ifneq (,$(findstring g++,$(CXX)))
-	STATIC_LINK_COMMAND := -Wl,--whole-archive $(STATIC_NAME) -Wl,--no-whole-archive
-else
-  # The following line must not be indented with a tab, since we are not inside a target
-  $(error Cannot static link with the $(CXX) compiler)
-endif
+#ifneq (,$(findstring clang++,$(CXX)))
+#	STATIC_LINK_COMMAND := -Wl,-force_load $(STATIC_NAME)
+#else ifneq (,$(findstring g++,$(CXX)))
+#	STATIC_LINK_COMMAND := -Wl,--whole-archive $(STATIC_NAME) -Wl,--no-whole-archive
+#else
+#  # The following line must not be indented with a tab, since we are not inside a target
+#  $(error Cannot static link with the $(CXX) compiler)
+#endif
 
 # Debugging
 ifeq ($(DEBUG), 1)
@@ -350,7 +365,8 @@ endif
 
 # CPU-only configuration
 ifeq ($(CPU_ONLY), 1)
-	OBJS := $(PROTO_OBJS) $(CXX_OBJS)
+	OBJS := $(PROTO_OBJS) $(CXX_OBJS) 
+	#$(SDS_OBJS) 
 	TEST_OBJS := $(TEST_CXX_OBJS)
 	TEST_BINS := $(TEST_CXX_BINS)
 	ALL_WARNS := $(ALL_CXX_WARNS)
@@ -570,7 +586,7 @@ $(ALL_BUILD_DIRS): | $(BUILD_DIR_LINK)
 
 $(DYNAMIC_NAME): $(OBJS) | $(LIB_BUILD_DIR)
 	@ echo LD -o $@
-	$(Q)$(CXX) -shared -o $@ $(OBJS) $(VERSIONFLAGS) $(LINKFLAGS) $(LDFLAGS)
+	$(Q)$(SDSCC) -shared -o $@ $(OBJS) $(VERSIONFLAGS) $(LINKFLAGS) $(LDFLAGS)
 	@ cd $(BUILD_DIR)/lib; rm -f $(DYNAMIC_NAME_SHORT);   ln -s $(DYNAMIC_VERSIONED_NAME_SHORT) $(DYNAMIC_NAME_SHORT)
 
 $(STATIC_NAME): $(OBJS) | $(LIB_BUILD_DIR)
@@ -651,6 +667,7 @@ clean:
 	@- $(RM) -rf $(OTHER_BUILD_DIR)
 	@- $(RM) -rf $(BUILD_DIR_LINK)
 	@- $(RM) -rf $(DISTRIBUTE_DIR)
+	@- $(RM) -rf _sds
 	@- $(RM) $(PY$(PROJECT)_SO)
 	@- $(RM) $(MAT$(PROJECT)_SO)
 
@@ -679,7 +696,7 @@ superclean: clean supercleanfiles
 
 $(DIST_ALIASES): $(DISTRIBUTE_DIR)
 
-$(DISTRIBUTE_DIR): all py | $(DISTRIBUTE_SUBDIRS)
+$(DISTRIBUTE_DIR): all | $(DISTRIBUTE_SUBDIRS)
 	# add proto
 	cp -r src/caffe/proto $(DISTRIBUTE_DIR)/
 	# add include
