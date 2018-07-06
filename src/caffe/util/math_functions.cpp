@@ -7,6 +7,8 @@
 #include "caffe/util/math_functions.hpp"
 #include "caffe/util/rng.hpp"
 
+#include "sds/sds_gemm.h"
+
 namespace caffe {
 
 template<>
@@ -16,8 +18,22 @@ void caffe_cpu_gemm<float>(const CBLAS_TRANSPOSE TransA,
     float* C) {
   int lda = (TransA == CblasNoTrans) ? K : M;
   int ldb = (TransB == CblasNoTrans) ? N : K;
-  cblas_sgemm(CblasRowMajor, TransA, TransB, M, N, K, alpha, A, lda, B,
-      ldb, beta, C, N);
+
+#ifdef __SDSCC__
+  int TA = (TransA == CblasNoTrans) ? 0 : 1;
+  int TB = (TransB == CblasNoTrans) ? 0 : 1;
+
+  if (M >= 64 && N >= 64 && K >= 64) {
+    std::cout << "sds_gemm: " << " " << TA << " " << TB << " " << M << " " << N << " " << K << std::endl;
+    sds_gemm(TA, TB, M, N, K, alpha,
+        (float *)A, lda, (float *)B, ldb, beta, (float *)C, N);  
+  } else {
+#endif
+    cblas_sgemm(CblasRowMajor, TransA, TransB, M, N, K, alpha, A, lda, B,
+        ldb, beta, C, N);
+#ifdef __SDSCC__
+  }
+#endif
 }
 
 template<>
